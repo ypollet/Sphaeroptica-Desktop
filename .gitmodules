@@ -1,0 +1,6 @@
+[submodule "frontend"]
+	path = frontend
+	url = git@github.com:ypollet/Sphaeroptica-Frontend.git
+[submodule "data"]
+	path = data
+	url = https://github.com/ypollet/Sphaeroptica-Data
