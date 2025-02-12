@@ -7,10 +7,10 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"gonum.org/v1/gonum/mat"
-	"sphaeroptica.be/photogrammetry/photogrammetry"
 	sph "sphaeroptica.be/photogrammetry/photogrammetry"
 )
 
@@ -30,9 +30,20 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 }
 
-// Greet returns a greeting for the given name
-func (a *App) Greet(name string) string {
-	return fmt.Sprintf("Hello %s, It's show time!", name)
+type project struct {
+	Commands          map[string]string
+	Intrinsics        sph.Intrinsics
+	Extrinsics        map[string]sph.Extrinsics
+	Thumbnails_width  int
+	Thumbnails_height int
+	Thumbnails        int
+}
+
+type virtualCameraImage struct {
+	name      string
+	image     string
+	longitude float64
+	latitude  float64
 }
 
 type cameraViewer struct {
@@ -40,7 +51,25 @@ type cameraViewer struct {
 }
 
 // Get images
-func (a *App) images(projectFile string) cameraViewer {
+func (a *App) Shortcuts(projectFile string) map[string]string {
+	jsonFile, err := os.Open(projectFile)
+	// if we os.Open returns an error then handle it
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer jsonFile.Close()
+
+	byteValue, _ := io.ReadAll(jsonFile)
+	var calibFile project
+	json.Unmarshal([]byte(byteValue), &calibFile)
+
+	fmt.Printf("%v\n", calibFile.Commands)
+
+	return calibFile.Commands
+}
+
+// Get images
+func (a *App) Images(projectFile string) cameraViewer {
 	// Open our jsonFile
 	jsonFile, err := os.Open(projectFile)
 	// if we os.Open returns an error then handle it
@@ -73,6 +102,8 @@ func (a *App) images(projectFile string) cameraViewer {
 	encodedImages := make([]virtualCameraImage, 0)
 
 	for _, image := range keys {
+		file := fmt.Sprintf("%s/%s", filepath.Dir(projectFile), image)
+		encodedImages = append(encodedImages, virtualCameraImage{name: image, image: file})
 
 		extrinsics := calibFile.Extrinsics[image].Matrix
 
@@ -99,51 +130,11 @@ func (a *App) images(projectFile string) cameraViewer {
 		fmt.Printf("C = %v\n", sph.FormatMatrixPrint(C))
 
 		vector.SubVec(C, centerVec)
-		long, lat := photogrammetry.GetLongLat(vector)
-		imageData.longitude = photogrammetry.Rad2Degrees(long)
-		imageData.latitude = photogrammetry.Rad2Degrees(lat)
+		long, lat := sph.GetLongLat(vector)
+		imageData.longitude = sph.Rad2Degrees(long)
+		imageData.latitude = sph.Rad2Degrees(lat)
 		encodedImages[index] = imageData
 	}
 
 	return cameraViewer{images: encodedImages}
 }
-
-/*
-  to_jsonify = {}
-  encoded_images = []
-  centers = {}
-  centers_x = []
-  centers_y = []
-  centers_z = []
-  for image_name in calib_file["extrinsics"]:
-    try:
-      image_data = get_response_image(f"{directory}/{calib_file['thumbnails']}/{image_name}")
-      image_data["name"] = image_name
-
-      mat = np.matrix(calib_file["extrinsics"][image_name]["matrix"])
-      rotation = mat[0:3, 0:3]
-      trans = mat[0:3, 3]
-      C = converters.get_camera_world_coordinates(rotation, trans)
-
-      centers[image_name] = C
-      centers_x.append(C.item(0)) # x
-      centers_y.append(C.item(1)) # y
-      centers_z.append(C.item(2)) # z
-
-      encoded_images.append(image_data)
-    except Exception as error:
-       print(error)
-       continue
-  _, center = reconstruction.sphereFit(centers_x, centers_y, centers_z)
-
-  for image_data in encoded_images:
-    image_name = image_data["name"]
-    C = centers[image_name]
-    vec = C - center
-    long, lat = converters.get_long_lat(vec)
-    image_data["longitude"], image_data["latitude"] = converters.rad2degrees(long), converters.rad2degrees(lat)
-
-  print(f"Sending {len(encoded_images)} images")
-  to_jsonify["images"] = encoded_images
-  return jsonify(to_jsonify)
-*/
