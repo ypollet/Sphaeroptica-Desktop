@@ -33,21 +33,22 @@ func (a *App) startup(ctx context.Context) {
 type project struct {
 	Commands          map[string]string
 	Intrinsics        sph.Intrinsics
-	Extrinsics        map[string]sph.Extrinsics
+	Extrinsics        map[string]sph.MatrixInfo
 	Thumbnails_width  int
 	Thumbnails_height int
-	Thumbnails        int
+	Thumbnails        string
 }
 
 type virtualCameraImage struct {
-	name      string
-	image     string
-	longitude float64
-	latitude  float64
+	Name      string  `json:"name"`
+	FullImage string  `json:"fullImage"`
+	Thumbnail string  `json:"thumbnail"`
+	Longitude float64 `json:"longitude"`
+	Latitude  float64 `json:"latitude"`
 }
 
 type cameraViewer struct {
-	images []virtualCameraImage
+	Images []virtualCameraImage `json:"images"`
 }
 
 // Get images
@@ -68,8 +69,14 @@ func (a *App) Shortcuts(projectFile string) map[string]string {
 	return calibFile.Commands
 }
 
+func (a *App) Greet() string {
+	return "Hello World!"
+}
+
 // Get images
-func (a *App) Images(projectFile string) cameraViewer {
+func (a *App) Images(projectFile string) *cameraViewer {
+	fmt.Printf("Checking : %s\n", projectFile)
+
 	// Open our jsonFile
 	jsonFile, err := os.Open(projectFile)
 	// if we os.Open returns an error then handle it
@@ -103,17 +110,19 @@ func (a *App) Images(projectFile string) cameraViewer {
 
 	for _, image := range keys {
 		file := fmt.Sprintf("%s/%s", filepath.Dir(projectFile), image)
-		encodedImages = append(encodedImages, virtualCameraImage{name: image, image: file})
+		thumbnail := fmt.Sprintf("%s/%s/%s", filepath.Dir(projectFile), calibFile.Thumbnails, image)
+		encodedImages = append(encodedImages, virtualCameraImage{Name: image, FullImage: file, Thumbnail: thumbnail})
 
-		extrinsics := calibFile.Extrinsics[image].Matrix
+		extrinsics := calibFile.Extrinsics[image]
 
 		extrinsicsMat := mat.NewDense(extrinsics.Shape.Row, extrinsics.Shape.Col, extrinsics.Matrix)
 		rotationMat := mat.DenseCopyOf(extrinsicsMat.Slice(0, 3, 0, 3))
 		transMat := mat.DenseCopyOf(extrinsicsMat.Slice(0, 3, 3, 4))
 		worldCoord := sph.GetCameraWorldsCoordinates(rotationMat, transMat)
-		centersX = append(centersX, worldCoord.At(0, 0))
-		centersY = append(centersY, worldCoord.At(1, 0))
-		centersZ = append(centersZ, worldCoord.At(2, 0))
+		centersX = append(centersX, worldCoord.AtVec(0))
+		centersY = append(centersY, worldCoord.AtVec(1))
+		centersZ = append(centersZ, worldCoord.AtVec(2))
+		centers[image] = worldCoord
 	}
 
 	_, center := sph.SphereFit(centersX, centersY, centersZ)
@@ -123,18 +132,18 @@ func (a *App) Images(projectFile string) cameraViewer {
 	centerVec := centerVecDense.SliceVec(0, 3)
 
 	for index, imageData := range encodedImages {
-		imageName := imageData.name
+		imageName := imageData.Name
 		C := centers[imageName]
 		var vector mat.VecDense
-		fmt.Printf("Center = %v\n", sph.FormatMatrixPrint(centerVec))
-		fmt.Printf("C = %v\n", sph.FormatMatrixPrint(C))
 
 		vector.SubVec(C, centerVec)
 		long, lat := sph.GetLongLat(vector)
-		imageData.longitude = sph.Rad2Degrees(long)
-		imageData.latitude = sph.Rad2Degrees(lat)
+		imageData.Longitude = sph.Rad2Degrees(long)
+		imageData.Latitude = sph.Rad2Degrees(lat)
 		encodedImages[index] = imageData
 	}
 
-	return cameraViewer{images: encodedImages}
+	camViewer := cameraViewer{Images: encodedImages}
+	fmt.Printf("%v\n", camViewer)
+	return &camViewer
 }

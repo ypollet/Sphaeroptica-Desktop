@@ -19,8 +19,3 @@ type Intrinsics struct {
 	CameraMatrix     MatrixInfo
 	DistortionMatrix MatrixInfo
 }
-
-type JeSaisPasQuoi struct {
-	Wesh  string
-	Samer int
-}
