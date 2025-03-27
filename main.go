@@ -53,8 +53,9 @@ func main() {
 		OnStartup:        app.startup,
 		Bind: []interface{}{
 			app,
-			&cameraViewer{},
-			&virtualCameraImage{},
+			&CameraViewer{},
+			&VirtualCameraImage{},
+			&Size{},
 		},
 	})
 

@@ -39,15 +39,22 @@ type project struct {
 	Thumbnails        string
 }
 
-type virtualCameraImage struct {
+type VirtualCameraImage struct {
 	Name        string          `json:"name"`
 	FullImage   string          `json:"fullImage"`
 	Thumbnail   string          `json:"thumbnail"`
 	Coordinates sph.Coordinates `json:"coordinates"`
 }
 
-type cameraViewer struct {
-	Images []virtualCameraImage `json:"images"`
+type Size struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
+type CameraViewer struct {
+	Images     []VirtualCameraImage `json:"images"`
+	Size       Size                 `json:"size"`
+	Thumbnails bool                 `json:"thumbnails"`
 }
 
 /*
@@ -72,9 +79,9 @@ func (a *App) Reproject(projectFile string, imageName string, position []float64
 
 	vectorPos := mat.NewVecDense(4, position)
 
-	intrinsics := mat.NewDense(calibFile.Intrinsics.CameraMatrix.Shape.Row, calibFile.Intrinsics.CameraMatrix.Shape.Col, calibFile.Intrinsics.CameraMatrix.Matrix)
-	distCoeffs := mat.NewDense(calibFile.Intrinsics.DistortionMatrix.Shape.Row, calibFile.Intrinsics.DistortionMatrix.Shape.Col, calibFile.Intrinsics.DistortionMatrix.Matrix)
-	extrinsics := mat.NewDense(calibFile.Extrinsics[imageName].Matrix.Shape.Row, calibFile.Extrinsics[imageName].Matrix.Shape.Col, calibFile.Extrinsics[imageName].Matrix.Matrix)
+	intrinsics := mat.NewDense(calibFile.Intrinsics.CameraMatrix.Shape.Row, calibFile.Intrinsics.CameraMatrix.Shape.Col, calibFile.Intrinsics.CameraMatrix.Data)
+	distCoeffs := mat.NewDense(calibFile.Intrinsics.DistortionMatrix.Shape.Row, calibFile.Intrinsics.DistortionMatrix.Shape.Col, calibFile.Intrinsics.DistortionMatrix.Data)
+	extrinsics := mat.NewDense(calibFile.Extrinsics[imageName].Matrix.Shape.Row, calibFile.Extrinsics[imageName].Matrix.Shape.Col, calibFile.Extrinsics[imageName].Matrix.Data)
 
 	return sph.ProjectPoints(vectorPos, intrinsics, extrinsics, distCoeffs)
 }
@@ -91,13 +98,13 @@ func (a *App) Triangulate(projectFile string, poses map[string]sph.Pos) []float6
 	var calibFile project
 	json.Unmarshal([]byte(byteValue), &calibFile)
 
-	intrinsics := mat.NewDense(calibFile.Intrinsics.CameraMatrix.Shape.Row, calibFile.Intrinsics.CameraMatrix.Shape.Col, calibFile.Intrinsics.CameraMatrix.Matrix)
-	distCoeffs := mat.NewDense(calibFile.Intrinsics.DistortionMatrix.Shape.Row, calibFile.Intrinsics.DistortionMatrix.Shape.Col, calibFile.Intrinsics.DistortionMatrix.Matrix)
+	intrinsics := mat.NewDense(calibFile.Intrinsics.CameraMatrix.Shape.Row, calibFile.Intrinsics.CameraMatrix.Shape.Col, calibFile.Intrinsics.CameraMatrix.Data)
+	distCoeffs := mat.NewDense(calibFile.Intrinsics.DistortionMatrix.Shape.Row, calibFile.Intrinsics.DistortionMatrix.Shape.Col, calibFile.Intrinsics.DistortionMatrix.Data)
 
 	projPoints := make([]sph.ProjPoint, 0)
 
 	for image, pos := range poses {
-		extrinsics := mat.NewDense(calibFile.Extrinsics[image].Matrix.Shape.Row, calibFile.Extrinsics[image].Matrix.Shape.Col, calibFile.Extrinsics[image].Matrix.Matrix)
+		extrinsics := mat.NewDense(calibFile.Extrinsics[image].Matrix.Shape.Row, calibFile.Extrinsics[image].Matrix.Shape.Col, calibFile.Extrinsics[image].Matrix.Data)
 		projMat := sph.ProjectionMatrix(intrinsics, extrinsics)
 		pose := mat.NewVecDense(2, []float64{pos.X, pos.Y})
 		undistortedPos := sph.UndistortIter(pose, intrinsics, distCoeffs)
@@ -128,7 +135,7 @@ func (a *App) Shortcuts(projectFile string) map[string]sph.Coordinates {
 }
 
 // Get images
-func (a *App) Images(projectFile string) *cameraViewer {
+func (a *App) Images(projectFile string) *CameraViewer {
 	fmt.Printf("Checking : %s\n", projectFile)
 
 	// Open our jsonFile
@@ -160,16 +167,21 @@ func (a *App) Images(projectFile string) *cameraViewer {
 	var centersY []float64
 	var centersZ []float64
 
-	encodedImages := make([]virtualCameraImage, 0)
+	encodedImages := make([]VirtualCameraImage, 0)
 
+	thumbnails := false
 	for _, image := range keys {
 		file := fmt.Sprintf("%s/%s", filepath.Dir(projectFile), image)
-		thumbnail := fmt.Sprintf("%s/%s/%s", filepath.Dir(projectFile), calibFile.Thumbnails, image)
-		encodedImages = append(encodedImages, virtualCameraImage{Name: image, FullImage: file, Thumbnail: thumbnail})
+		thumbnail := ""
+		if calibFile.Thumbnails != "" {
+			thumbnail = fmt.Sprintf("%s/%s/%s", filepath.Dir(projectFile), calibFile.Thumbnails, image)
+			thumbnails = true
+		}
+		encodedImages = append(encodedImages, VirtualCameraImage{Name: image, FullImage: file, Thumbnail: thumbnail})
 
 		extrinsics := calibFile.Extrinsics[image]
 
-		extrinsicsMat := mat.NewDense(extrinsics.Matrix.Shape.Row, extrinsics.Matrix.Shape.Col, extrinsics.Matrix.Matrix)
+		extrinsicsMat := mat.NewDense(extrinsics.Matrix.Shape.Row, extrinsics.Matrix.Shape.Col, extrinsics.Matrix.Data)
 		rotationMat := mat.DenseCopyOf(extrinsicsMat.Slice(0, 3, 0, 3))
 		transMat := mat.DenseCopyOf(extrinsicsMat.Slice(0, 3, 3, 4))
 		worldCoord := sph.GetCameraWorldsCoordinates(rotationMat, transMat)
@@ -198,6 +210,6 @@ func (a *App) Images(projectFile string) *cameraViewer {
 		encodedImages[index] = imageData
 	}
 
-	camViewer := cameraViewer{Images: encodedImages}
+	camViewer := CameraViewer{Images: encodedImages, Thumbnails: thumbnails, Size: Size{Width: calibFile.Intrinsics.Width, Height: calibFile.Intrinsics.Height}}
 	return &camViewer
 }

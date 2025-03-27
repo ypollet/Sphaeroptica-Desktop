@@ -6,9 +6,10 @@ type Shape struct {
 	Row int
 	Col int
 }
+
 type MatrixInfo struct {
-	Shape  Shape
-	Matrix []float64
+	Shape Shape
+	Data  []float64
 }
 
 type Extrinsics struct {
