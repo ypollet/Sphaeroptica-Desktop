@@ -233,6 +233,6 @@ func SphereFit(spX []float64, spY []float64, spZ []float64) (float64, mat.Vector
 
 	t := (center.At(0, 0) * center.At(0, 0)) + (center.At(1, 0) * center.At(1, 0)) + (center.At(2, 0) * center.At(2, 0)) + center.At(3, 0)
 
-	center.Scale(1/center.At(3, 0), &center)
+	//center.Scale(1/center.At(3, 0), &center)
 	return math.Sqrt(t), center.ColView(0)
 }

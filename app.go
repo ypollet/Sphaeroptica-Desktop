@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"gonum.org/v1/gonum/mat"
 	sph "sphaeroptica.be/photogrammetry/photogrammetry"
 )
@@ -69,7 +70,8 @@ func (a *App) Reproject(projectFile string, imageName string, position []float64
 	jsonFile, err := os.Open(projectFile)
 	// if we os.Open returns an error then handle it
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return sph.Pos{X: -1, Y: -1}
 	}
 	defer jsonFile.Close()
 
@@ -90,7 +92,8 @@ func (a *App) Triangulate(projectFile string, poses map[string]sph.Pos) []float6
 	jsonFile, err := os.Open(projectFile)
 	// if we os.Open returns an error then handle it
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return []float64{}
 	}
 	defer jsonFile.Close()
 
@@ -116,33 +119,31 @@ func (a *App) Triangulate(projectFile string, poses map[string]sph.Pos) []float6
 	return landmarkPos
 }
 
-// Get images
+// Get shortcuts
 func (a *App) Shortcuts(projectFile string) map[string]sph.Coordinates {
 	jsonFile, err := os.Open(projectFile)
 	// if we os.Open returns an error then handle it
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return map[string]sph.Coordinates{}
 	}
 	defer jsonFile.Close()
 
 	byteValue, _ := io.ReadAll(jsonFile)
 	var calibFile project
 	json.Unmarshal([]byte(byteValue), &calibFile)
-
-	fmt.Printf("Shortcuts : %v\n", calibFile.Commands)
 
 	return calibFile.Commands
 }
 
 // Get images
 func (a *App) Images(projectFile string) *CameraViewer {
-	fmt.Printf("Checking : %s\n", projectFile)
-
 	// Open our jsonFile
 	jsonFile, err := os.Open(projectFile)
 	// if we os.Open returns an error then handle it
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return nil
 	}
 	defer jsonFile.Close()
 
@@ -150,8 +151,6 @@ func (a *App) Images(projectFile string) *CameraViewer {
 
 	var calibFile project
 	json.Unmarshal([]byte(byteValue), &calibFile)
-
-	fmt.Printf("Intrinsics : %+v\n", calibFile.Intrinsics)
 
 	keys := make([]string, 0, len(calibFile.Extrinsics))
 
@@ -159,7 +158,6 @@ func (a *App) Images(projectFile string) *CameraViewer {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	fmt.Printf("Number Images = %d\n", len(keys))
 
 	centers := make(map[string]mat.Vector)
 
@@ -171,10 +169,11 @@ func (a *App) Images(projectFile string) *CameraViewer {
 
 	thumbnails := false
 	for _, image := range keys {
-		file := fmt.Sprintf("%s/%s", filepath.Dir(projectFile), image)
+		projectDirAbs, _ := filepath.Abs(filepath.Dir(projectFile))
+		file := fmt.Sprintf("%s/%s", projectDirAbs, image)
 		thumbnail := ""
 		if calibFile.Thumbnails != "" {
-			thumbnail = fmt.Sprintf("%s/%s/%s", filepath.Dir(projectFile), calibFile.Thumbnails, image)
+			thumbnail = fmt.Sprintf("%s/%s/%s", projectDirAbs, calibFile.Thumbnails, image)
 			thumbnails = true
 		}
 		encodedImages = append(encodedImages, VirtualCameraImage{Name: image, FullImage: file, Thumbnail: thumbnail})
@@ -196,7 +195,7 @@ func (a *App) Images(projectFile string) *CameraViewer {
 	var centerVecDense mat.VecDense
 	centerVecDense.CloneFromVec(center)
 	centerVec := centerVecDense.SliceVec(0, 3)
-
+	fmt.Printf("Center = %v\n\n", sph.FormatMatrixPrint(centerVec))
 	for index, imageData := range encodedImages {
 		imageName := imageData.Name
 		C := centers[imageName]
@@ -212,4 +211,21 @@ func (a *App) Images(projectFile string) *CameraViewer {
 
 	camViewer := CameraViewer{Images: encodedImages, Thumbnails: thumbnails, Size: Size{Width: calibFile.Intrinsics.Width, Height: calibFile.Intrinsics.Height}}
 	return &camViewer
+}
+
+func (a *App) ImportNewFile() string {
+	fmt.Printf("Importing New File\n")
+	str, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select File",
+		Filters: []runtime.FileFilter{
+			{
+				DisplayName: "Calibration File",
+				Pattern:     "*.json",
+			},
+		},
+	})
+	if err != nil {
+		return ""
+	}
+	return str
 }
