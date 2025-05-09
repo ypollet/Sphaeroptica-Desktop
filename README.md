@@ -55,7 +55,6 @@ The list of landmarks will be shown in ***3b***
 4. Compute Distances  
 Double click on 2 landmarks displayed in ***3b*** (they'll be purple) and as you right click, you can ask Sphaeroptica to compute the distance between these landmarks (and it will automatically update when you move either landmark)
 
-
 ![Window of Sphaeroptica](images/SphaeropticaWindow.png)
 
 ## 4.  TODO
