@@ -12,6 +12,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"gonum.org/v1/gonum/mat"
+	imp "sphaeroptica.be/imports/imports"
 	sph "sphaeroptica.be/photogrammetry/photogrammetry"
 )
 
@@ -32,12 +33,12 @@ func (a *App) startup(ctx context.Context) {
 }
 
 type project struct {
-	Commands          map[string]sph.Coordinates
-	Intrinsics        sph.Intrinsics
-	Extrinsics        map[string]sph.Extrinsics
-	Thumbnails_width  int
-	Thumbnails_height int
-	Thumbnails        string
+	Commands         map[string]sph.Coordinates
+	Intrinsics       sph.Intrinsics
+	Extrinsics       map[string]sph.Extrinsics
+	ThumbnailsWidth  int
+	ThumbnailsHeight int
+	Thumbnails       string
 }
 
 type VirtualCameraImage struct {
@@ -58,19 +59,213 @@ type CameraViewer struct {
 	Thumbnails bool                 `json:"thumbnails"`
 }
 
-/*
-   pose = reconstruction.project_points(position, intrinsics, extrinsics, dist_coeffs)
+type Filter struct {
+	Images     []VirtualCameraImage `json:"images"`
+	Size       Size                 `json:"size"`
+	Thumbnails bool                 `json:"thumbnails"`
+}
+type Type int
+type ImportFile struct {
+	Name    string
+	Label   string
+	Filters []runtime.FileFilter
+	Type    Type
+}
 
-   return {
-     "pose": {"x": pose.item(0), "y": pose.item(1)}
-           }
-*/
+type ImportForm struct {
+	Name  string `json:"name"`
+	Label string `json:"label"`
+	File  bool   `json:"file"`
+}
+
+const (
+	NONE = iota
+	FILE
+	FOLDER
+)
+
+var defaultDirectory = ""
+
+type ImportTemplate struct {
+	Files []ImportFile
+}
+
+var IMPORTS_FILES = map[string][]ImportFile{
+	"Metashape": {
+		{
+			Name:    "Images",
+			Label:   "Images Folder",
+			Type:    FOLDER,
+			Filters: []runtime.FileFilter{},
+		},
+		{
+			Name:    "Thumbnails",
+			Label:   "Thumbnails Folder",
+			Type:    NONE,
+			Filters: []runtime.FileFilter{},
+		},
+		{
+			Name:  "Intrinsics",
+			Label: "Intrinsics File OPENCV Format",
+			Type:  FILE,
+			Filters: []runtime.FileFilter{
+				{
+					DisplayName: "Intrinsic file (*.xml)",
+					Pattern:     "*.xml",
+				},
+			},
+		},
+		{
+			Name:  "Extrinsics",
+			Label: "Extrinsics File ODK",
+			Type:  FILE,
+			Filters: []runtime.FileFilter{
+				{
+					DisplayName: "Extrinsic file (*.txt)",
+					Pattern:     "*.txt",
+				},
+			},
+		},
+	},
+}
+
+var IMPORTS_READER = map[string]func(map[string]string) (*project, string, []imp.SaveThumbnail){
+	"Metashape": ReadMetashape,
+}
+
+func ReadMetashape(files map[string]string) (*project, string, []imp.SaveThumbnail) {
+	log.Println("Read Metashape Log")
+	if len(files) != len(IMPORTS_FILES["Metashape"]) {
+		log.Printf("File length incorrect\n")
+		log.Printf("%d, %d\n", len(files), len(IMPORTS_FILES["Metashape"]))
+		return nil, "", nil
+	}
+	for _, importFile := range IMPORTS_FILES["Metashape"] {
+		if _, ok := files[importFile.Name]; !ok || len(files[importFile.Name]) == 0 {
+			log.Printf("File Names incorrect\n")
+			log.Printf("%sn", importFile.Name)
+			log.Printf("%sn", files[importFile.Name])
+			return nil, "", nil
+		}
+	}
+
+	imagesDir := files["Images"]
+	thumbnailsDir := files["Thumbnails"]
+
+	thumbnails := fmt.Sprintf("%s/%s", imagesDir, thumbnailsDir)
+	if err := os.MkdirAll(thumbnails, os.ModePerm); err != nil {
+		log.Println(err)
+		return nil, "", nil
+	}
+
+	images, thumbWidth, thumbHeight, thumbCreate, err := imp.ReadChildImages(imagesDir, thumbnailsDir)
+	if err != nil {
+		log.Println(err)
+		return nil, "", nil
+	}
+
+	intrinsics, err := imp.ReadIntrinsicMetashape(files["Intrinsics"])
+	if err != nil {
+		log.Println(err)
+		return nil, "", nil
+	}
+
+	extrinsics, latMin, latMax, err := imp.ReadExtrinsicMetashape(files["Extrinsics"], images)
+	if err != nil {
+		log.Println(err)
+		return nil, "", nil
+	}
+
+	return &project{
+		Commands: map[string]sph.Coordinates{
+			"FRONT":    {Longitude: 0, Latitude: 0},
+			"POST":     {Longitude: 180, Latitude: 0},
+			"LEFT":     {Longitude: 90, Latitude: 0},
+			"RIGHT":    {Longitude: -90, Latitude: 0},
+			"SUPERIOR": {Longitude: 0, Latitude: latMin},
+			"INFERIOR": {Longitude: 180, Latitude: latMax},
+		},
+		Intrinsics:       *intrinsics,
+		Extrinsics:       extrinsics,
+		Thumbnails:       thumbnailsDir,
+		ThumbnailsWidth:  thumbWidth,
+		ThumbnailsHeight: thumbHeight,
+	}, imagesDir, thumbCreate
+}
+
+func (a *App) GetImportMethods() map[string][]ImportForm {
+	imports := make(map[string][]ImportForm)
+	for software, files := range IMPORTS_FILES {
+		filenames := make([]ImportForm, len(files))
+		for index, file := range files {
+			filenames[index] = ImportForm{
+				Name:  file.Name,
+				Label: file.Label,
+				File:  file.Type != NONE,
+			}
+		}
+		imports[software] = filenames
+	}
+	return imports
+}
+
+func (a *App) ImportProject(software string, files map[string]string) string {
+	log.Printf("Import Project from %s\n", software)
+	project, imagesDir, thumbCreate := IMPORTS_READER[software](files)
+
+	data, err := json.MarshalIndent(project, "", "  ")
+	if err != nil {
+		log.Println(err)
+		return ""
+	}
+
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		DefaultDirectory: imagesDir,
+		DefaultFilename:  "sphaeroptica.json",
+		Filters: []runtime.FileFilter{{
+			DisplayName: ".json",
+			Pattern:     "*.json",
+		}},
+	})
+	if err != nil {
+		log.Println(err)
+		return ""
+	}
+	thumbPath := fmt.Sprintf("%s/%s", imagesDir, project.Thumbnails)
+	project.ThumbnailsWidth, project.ThumbnailsHeight, err = imp.CreateThumbnails(thumbPath, thumbCreate, project.ThumbnailsWidth, project.ThumbnailsHeight)
+	if err != nil {
+		log.Println("Error while creating thumbnails")
+		log.Println(err)
+		return ""
+	}
+	err = os.WriteFile(path, data, 0644)
+	if err != nil {
+		log.Println(err)
+		return ""
+	}
+
+	return path
+}
+
+func (a *App) OpenImportFile(software string, index int) string {
+	importFile := IMPORTS_FILES[software][index]
+	str := ""
+
+	switch importFile.Type {
+	case FILE:
+		str = a.openFileDialog("Select "+importFile.Label, importFile.Filters)
+	case FOLDER:
+		str = a.openDirectoryDialog("Select "+importFile.Label, importFile.Filters)
+	}
+
+	return str
+}
 
 func (a *App) Reproject(projectFile string, imageName string, position []float64) sph.Pos {
 	jsonFile, err := os.Open(projectFile)
 	// if we os.Open returns an error then handle it
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return sph.Pos{X: -1, Y: -1}
 	}
 	defer jsonFile.Close()
@@ -92,7 +287,7 @@ func (a *App) Triangulate(projectFile string, poses map[string]sph.Pos) []float6
 	jsonFile, err := os.Open(projectFile)
 	// if we os.Open returns an error then handle it
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return []float64{}
 	}
 	defer jsonFile.Close()
@@ -124,7 +319,7 @@ func (a *App) Shortcuts(projectFile string) map[string]sph.Coordinates {
 	jsonFile, err := os.Open(projectFile)
 	// if we os.Open returns an error then handle it
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return map[string]sph.Coordinates{}
 	}
 	defer jsonFile.Close()
@@ -142,7 +337,7 @@ func (a *App) Images(projectFile string) *CameraViewer {
 	jsonFile, err := os.Open(projectFile)
 	// if we os.Open returns an error then handle it
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return nil
 	}
 	defer jsonFile.Close()
@@ -151,6 +346,8 @@ func (a *App) Images(projectFile string) *CameraViewer {
 
 	var calibFile project
 	json.Unmarshal([]byte(byteValue), &calibFile)
+
+	log.Printf("Project : \n%v\n", calibFile)
 
 	keys := make([]string, 0, len(calibFile.Extrinsics))
 
@@ -195,7 +392,7 @@ func (a *App) Images(projectFile string) *CameraViewer {
 	var centerVecDense mat.VecDense
 	centerVecDense.CloneFromVec(center)
 	centerVec := centerVecDense.SliceVec(0, 3)
-	fmt.Printf("Center = %v\n\n", sph.FormatMatrixPrint(centerVec))
+	log.Printf("Center = %v\n\n", sph.FormatMatrixPrint(centerVec))
 	for index, imageData := range encodedImages {
 		imageName := imageData.Name
 		C := centers[imageName]
@@ -214,16 +411,37 @@ func (a *App) Images(projectFile string) *CameraViewer {
 }
 
 func (a *App) ImportNewFile() string {
-	fmt.Printf("Importing New File\n")
-	str, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select File",
-		Filters: []runtime.FileFilter{
-			{
-				DisplayName: "Calibration File",
-				Pattern:     "*.json",
-			},
+	str := a.openFileDialog("Select Project File", []runtime.FileFilter{
+		{
+			DisplayName: "Calibration File",
+			Pattern:     "*.json",
 		},
+	},
+	)
+
+	return str
+}
+
+func (a *App) openFileDialog(title string, filters []runtime.FileFilter) string {
+	str, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		DefaultDirectory: defaultDirectory,
+		Title:            title,
+		Filters:          filters,
 	})
+	defaultDirectory = filepath.Dir(str)
+	if err != nil {
+		return ""
+	}
+	return str
+}
+
+func (a *App) openDirectoryDialog(title string, filters []runtime.FileFilter) string {
+	str, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		DefaultDirectory: defaultDirectory,
+		Title:            title,
+		Filters:          filters,
+	})
+	defaultDirectory = str
 	if err != nil {
 		return ""
 	}

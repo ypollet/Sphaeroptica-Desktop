@@ -6,6 +6,7 @@ require gonum.org/v1/gonum v0.15.1
 
 require (
 	github.com/wailsapp/wails/v2 v2.9.2
+	sphaeroptica.be/imports v1.0.0
 	sphaeroptica.be/photogrammetry v1.0.0
 )
 
@@ -14,15 +15,16 @@ require (
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/uuid v1.3.0 // indirect
+	github.com/h2non/bimg v1.1.9 // indirect
 	github.com/jchv/go-winloader v0.0.0-20210711035445-715c2860da7e // indirect
 	github.com/labstack/echo/v4 v4.10.2 // indirect
-	github.com/labstack/gommon v0.4.0 // indirect
+	github.com/labstack/gommon v0.4.2 // indirect
 	github.com/leaanthony/go-ansi-parser v1.6.0 // indirect
 	github.com/leaanthony/gosod v1.0.3 // indirect
 	github.com/leaanthony/slicer v1.6.0 // indirect
 	github.com/leaanthony/u v1.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
-	github.com/mattn/go-isatty v0.0.19 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/pkg/browser v0.0.0-20210911075715-681adbf594b8 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.4 // indirect
@@ -40,5 +42,7 @@ require (
 )
 
 replace sphaeroptica.be/photogrammetry v1.0.0 => ./photogrammetry
+
+replace sphaeroptica.be/imports v1.0.0 => ./imports
 
 // replace github.com/wailsapp/wails/v2 v2.9.2 => /home/psadmin/go/pkg/mod

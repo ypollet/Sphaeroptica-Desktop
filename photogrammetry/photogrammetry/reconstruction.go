@@ -11,6 +11,32 @@ import (
 const OPENCV_DISTORT_VALUES = 8
 const MAX_ITER = 100
 
+func RotateXAxis(omega float64) mat.Matrix {
+	return mat.NewDense(3, 3, []float64{1, 0, 0, 0, math.Cos(omega), -math.Sin(omega), 0, math.Sin(omega), math.Cos(omega)})
+}
+
+func RotateYAxis(phi float64) mat.Matrix {
+	return mat.NewDense(3, 3, []float64{math.Cos(phi), 0, math.Sin(phi), 0, 1, 0, -math.Sin(phi), 0, math.Cos(phi)})
+}
+
+func RotateZAxis(kappa float64) mat.Matrix {
+	return mat.NewDense(3, 3, []float64{math.Cos(kappa), -math.Sin(kappa), 0, math.Sin(kappa), math.Cos(kappa), 0, 0, 0, 1})
+}
+
+/**
+
+def rotate_z_axis(kappa):
+
+    Rz = np.matrix(
+        [
+            [math.cos(kappa), -math.sin(kappa), 0],
+            [math.sin(kappa), math.cos(kappa), 0],
+            [0, 0, 1],
+        ]
+    )
+    return Rz
+*/
+
 func scaleHomogeonousPoint(point mat.Vector) mat.Vector {
 	var vector mat.VecDense
 	vector.ScaleVec((1 / point.AtVec(point.Len()-1)), point)

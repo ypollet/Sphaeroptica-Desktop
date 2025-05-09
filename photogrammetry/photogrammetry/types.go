@@ -1,6 +1,10 @@
 package photogrammetry
 
-import "gonum.org/v1/gonum/mat"
+import (
+	"encoding/xml"
+
+	"gonum.org/v1/gonum/mat"
+)
 
 type Shape struct {
 	Row int
@@ -36,4 +40,21 @@ type Pos struct {
 type ProjPoint struct {
 	Mat   mat.Matrix
 	Point mat.Vector
+}
+
+// Import Files Types struct
+
+type IntrinsicsXML struct {
+	XMLName                 xml.Name   `xml:"opencv_storage"`
+	Image_Width             int        `xml:"image_Width"`
+	Image_Height            int        `xml:"image_Height"`
+	Camera_Matrix           MatrixData `xml:"Camera_Matrix"`
+	Distortion_Coefficients MatrixData `xml:"Distortion_Coefficients"`
+}
+
+type MatrixData struct {
+	Rows int    `xml:"rows"`
+	Cols int    `xml:"cols"`
+	Dt   string `xml:"dt"`
+	Data string `xml:"data"`
 }
