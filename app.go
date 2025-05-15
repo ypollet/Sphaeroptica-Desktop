@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"gonum.org/v1/gonum/mat"
@@ -18,76 +20,25 @@ import (
 
 // App struct
 type App struct {
-	ctx context.Context
+	ctx              context.Context
+	Path             string
+	Project          *project
+	DefaultDirectory string
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	return &App{}
+	return &App{
+		Path:             "",
+		Project:          nil,
+		DefaultDirectory: "",
+	}
 }
 
 // startup is called when the app starts. The context is saved
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-}
-
-type project struct {
-	Commands         map[string]sph.Coordinates
-	Intrinsics       sph.Intrinsics
-	Extrinsics       map[string]sph.Extrinsics
-	ThumbnailsWidth  int
-	ThumbnailsHeight int
-	Thumbnails       string
-}
-
-type VirtualCameraImage struct {
-	Name        string          `json:"name"`
-	FullImage   string          `json:"fullImage"`
-	Thumbnail   string          `json:"thumbnail"`
-	Coordinates sph.Coordinates `json:"coordinates"`
-}
-
-type Size struct {
-	Width  int `json:"width"`
-	Height int `json:"height"`
-}
-
-type CameraViewer struct {
-	Images     []VirtualCameraImage `json:"images"`
-	Size       Size                 `json:"size"`
-	Thumbnails bool                 `json:"thumbnails"`
-}
-
-type Filter struct {
-	Images     []VirtualCameraImage `json:"images"`
-	Size       Size                 `json:"size"`
-	Thumbnails bool                 `json:"thumbnails"`
-}
-type Type int
-type ImportFile struct {
-	Name    string
-	Label   string
-	Filters []runtime.FileFilter
-	Type    Type
-}
-
-type ImportForm struct {
-	Name  string `json:"name"`
-	Label string `json:"label"`
-	File  bool   `json:"file"`
-}
-
-const (
-	NONE = iota
-	FILE
-	FOLDER
-)
-
-var defaultDirectory = ""
-
-type ImportTemplate struct {
-	Files []ImportFile
 }
 
 var IMPORTS_FILES = map[string][]ImportFile{
@@ -221,10 +172,10 @@ func (a *App) ImportProject(software string, files map[string]string) string {
 
 	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
 		DefaultDirectory: imagesDir,
-		DefaultFilename:  "sphaeroptica.json",
+		DefaultFilename:  "sphaeroptica.sph",
 		Filters: []runtime.FileFilter{{
-			DisplayName: ".json",
-			Pattern:     "*.json",
+			DisplayName: ".sph",
+			Pattern:     "*.sph",
 		}},
 	})
 	if err != nil {
@@ -244,6 +195,9 @@ func (a *App) ImportProject(software string, files map[string]string) string {
 		return ""
 	}
 
+	a.Path = path
+	a.Project = project
+
 	return path
 }
 
@@ -262,47 +216,38 @@ func (a *App) OpenImportFile(software string, index int) string {
 }
 
 func (a *App) Reproject(projectFile string, imageName string, position []float64) sph.Pos {
-	jsonFile, err := os.Open(projectFile)
-	// if we os.Open returns an error then handle it
-	if err != nil {
-		log.Println(err)
-		return sph.Pos{X: -1, Y: -1}
+	if a.Path != projectFile {
+		err := a.loadProjectFile(projectFile)
+		if err != nil {
+			log.Println(err)
+			return sph.Pos{X: -1, Y: -1}
+		}
 	}
-	defer jsonFile.Close()
-
-	byteValue, _ := io.ReadAll(jsonFile)
-	var calibFile project
-	json.Unmarshal([]byte(byteValue), &calibFile)
-
 	vectorPos := mat.NewVecDense(4, position)
 
-	intrinsics := mat.NewDense(calibFile.Intrinsics.CameraMatrix.Shape.Row, calibFile.Intrinsics.CameraMatrix.Shape.Col, calibFile.Intrinsics.CameraMatrix.Data)
-	distCoeffs := mat.NewDense(calibFile.Intrinsics.DistortionMatrix.Shape.Row, calibFile.Intrinsics.DistortionMatrix.Shape.Col, calibFile.Intrinsics.DistortionMatrix.Data)
-	extrinsics := mat.NewDense(calibFile.Extrinsics[imageName].Matrix.Shape.Row, calibFile.Extrinsics[imageName].Matrix.Shape.Col, calibFile.Extrinsics[imageName].Matrix.Data)
+	intrinsics := mat.NewDense(a.Project.Intrinsics.CameraMatrix.Shape.Row, a.Project.Intrinsics.CameraMatrix.Shape.Col, a.Project.Intrinsics.CameraMatrix.Data)
+	distCoeffs := mat.NewDense(a.Project.Intrinsics.DistortionMatrix.Shape.Row, a.Project.Intrinsics.DistortionMatrix.Shape.Col, a.Project.Intrinsics.DistortionMatrix.Data)
+	extrinsics := mat.NewDense(a.Project.Extrinsics[imageName].Matrix.Shape.Row, a.Project.Extrinsics[imageName].Matrix.Shape.Col, a.Project.Extrinsics[imageName].Matrix.Data)
 
 	return sph.ProjectPoints(vectorPos, intrinsics, extrinsics, distCoeffs)
 }
 
 func (a *App) Triangulate(projectFile string, poses map[string]sph.Pos) []float64 {
-	jsonFile, err := os.Open(projectFile)
-	// if we os.Open returns an error then handle it
-	if err != nil {
-		log.Println(err)
-		return []float64{}
+	if a.Path != projectFile {
+		err := a.loadProjectFile(projectFile)
+		if err != nil {
+			log.Println(err)
+			return []float64{}
+		}
 	}
-	defer jsonFile.Close()
 
-	byteValue, _ := io.ReadAll(jsonFile)
-	var calibFile project
-	json.Unmarshal([]byte(byteValue), &calibFile)
-
-	intrinsics := mat.NewDense(calibFile.Intrinsics.CameraMatrix.Shape.Row, calibFile.Intrinsics.CameraMatrix.Shape.Col, calibFile.Intrinsics.CameraMatrix.Data)
-	distCoeffs := mat.NewDense(calibFile.Intrinsics.DistortionMatrix.Shape.Row, calibFile.Intrinsics.DistortionMatrix.Shape.Col, calibFile.Intrinsics.DistortionMatrix.Data)
+	intrinsics := mat.NewDense(a.Project.Intrinsics.CameraMatrix.Shape.Row, a.Project.Intrinsics.CameraMatrix.Shape.Col, a.Project.Intrinsics.CameraMatrix.Data)
+	distCoeffs := mat.NewDense(a.Project.Intrinsics.DistortionMatrix.Shape.Row, a.Project.Intrinsics.DistortionMatrix.Shape.Col, a.Project.Intrinsics.DistortionMatrix.Data)
 
 	projPoints := make([]sph.ProjPoint, 0)
 
 	for image, pos := range poses {
-		extrinsics := mat.NewDense(calibFile.Extrinsics[image].Matrix.Shape.Row, calibFile.Extrinsics[image].Matrix.Shape.Col, calibFile.Extrinsics[image].Matrix.Data)
+		extrinsics := mat.NewDense(a.Project.Extrinsics[image].Matrix.Shape.Row, a.Project.Extrinsics[image].Matrix.Shape.Col, a.Project.Extrinsics[image].Matrix.Data)
 		projMat := sph.ProjectionMatrix(intrinsics, extrinsics)
 		pose := mat.NewVecDense(2, []float64{pos.X, pos.Y})
 		undistortedPos := sph.UndistortIter(pose, intrinsics, distCoeffs)
@@ -316,42 +261,32 @@ func (a *App) Triangulate(projectFile string, poses map[string]sph.Pos) []float6
 
 // Get shortcuts
 func (a *App) Shortcuts(projectFile string) map[string]sph.Coordinates {
-	jsonFile, err := os.Open(projectFile)
-	// if we os.Open returns an error then handle it
-	if err != nil {
-		log.Println(err)
-		return map[string]sph.Coordinates{}
+	if a.Path != projectFile {
+		err := a.loadProjectFile(projectFile)
+		if err != nil {
+			log.Println(err)
+			return map[string]sph.Coordinates{}
+		}
 	}
-	defer jsonFile.Close()
 
-	byteValue, _ := io.ReadAll(jsonFile)
-	var calibFile project
-	json.Unmarshal([]byte(byteValue), &calibFile)
-
-	return calibFile.Commands
+	return a.Project.Commands
 }
 
 // Get images
 func (a *App) Images(projectFile string) *CameraViewer {
-	// Open our jsonFile
-	jsonFile, err := os.Open(projectFile)
-	// if we os.Open returns an error then handle it
-	if err != nil {
-		log.Println(err)
-		return nil
+	if a.Path != projectFile {
+		err := a.loadProjectFile(projectFile)
+		if err != nil {
+			log.Println(err)
+			return nil
+		}
 	}
-	defer jsonFile.Close()
 
-	byteValue, _ := io.ReadAll(jsonFile)
+	log.Printf("Project : \n%v\n", a.Project)
 
-	var calibFile project
-	json.Unmarshal([]byte(byteValue), &calibFile)
+	keys := make([]string, 0, len(a.Project.Extrinsics))
 
-	log.Printf("Project : \n%v\n", calibFile)
-
-	keys := make([]string, 0, len(calibFile.Extrinsics))
-
-	for k := range calibFile.Extrinsics {
+	for k := range a.Project.Extrinsics {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
@@ -369,13 +304,13 @@ func (a *App) Images(projectFile string) *CameraViewer {
 		projectDirAbs, _ := filepath.Abs(filepath.Dir(projectFile))
 		file := fmt.Sprintf("%s/%s", projectDirAbs, image)
 		thumbnail := ""
-		if calibFile.Thumbnails != "" {
-			thumbnail = fmt.Sprintf("%s/%s/%s", projectDirAbs, calibFile.Thumbnails, image)
+		if a.Project.Thumbnails != "" {
+			thumbnail = fmt.Sprintf("%s/%s/%s", projectDirAbs, a.Project.Thumbnails, image)
 			thumbnails = true
 		}
 		encodedImages = append(encodedImages, VirtualCameraImage{Name: image, FullImage: file, Thumbnail: thumbnail})
 
-		extrinsics := calibFile.Extrinsics[image]
+		extrinsics := a.Project.Extrinsics[image]
 
 		extrinsicsMat := mat.NewDense(extrinsics.Matrix.Shape.Row, extrinsics.Matrix.Shape.Col, extrinsics.Matrix.Data)
 		rotationMat := mat.DenseCopyOf(extrinsicsMat.Slice(0, 3, 0, 3))
@@ -406,29 +341,128 @@ func (a *App) Images(projectFile string) *CameraViewer {
 		encodedImages[index] = imageData
 	}
 
-	camViewer := CameraViewer{Images: encodedImages, Thumbnails: thumbnails, Size: Size{Width: calibFile.Intrinsics.Width, Height: calibFile.Intrinsics.Height}}
+	camViewer := CameraViewer{Images: encodedImages, Thumbnails: thumbnails, Size: Size{Width: a.Project.Intrinsics.Width, Height: a.Project.Intrinsics.Height}}
 	return &camViewer
 }
 
-func (a *App) ImportNewFile() string {
-	str := a.openFileDialog("Select Project File", []runtime.FileFilter{
-		{
-			DisplayName: "Calibration File",
+func (a *App) CreateLandmarksCSV(landmarks []LandmarkCSV) string {
+	log.Println("Create CSV")
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		DefaultDirectory: filepath.Dir(a.Path),
+		DefaultFilename:  fmt.Sprintf("landmarks_%s.csv", time.Now().Format("20060102_150405")),
+		Filters: []runtime.FileFilter{{
+			DisplayName: "CSV (.csv)",
+			Pattern:     "*.csv",
+		}},
+	})
+	if err != nil {
+		log.Println(err)
+		return err.Error()
+	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		log.Println(err)
+		return err.Error()
+	}
+
+	writer := csv.NewWriter(f)
+	err = writer.Write([]string{"Label", "Color", "X", "Y", "Z", "X_adjused", "Y_adjusted", "Z_adjusted"})
+	if err != nil {
+		log.Println(err)
+		return err.Error()
+	}
+	for _, landmark := range landmarks {
+		err = writer.Write([]string{landmark.Label, landmark.Color, landmark.X, landmark.Y, landmark.Z, landmark.XAdjusted, landmark.YAdjusted, landmark.ZAdjusted})
+		if err != nil {
+			log.Println(err)
+			return err.Error()
+		}
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		log.Println(err)
+		return err.Error()
+	}
+	return ""
+}
+
+func (a *App) CreateLandmarksJSON(landmarks ExportJSON) string {
+	log.Println("Create JSON")
+	data, err := json.MarshalIndent(landmarks, "", "  ")
+	if err != nil {
+		log.Println(err)
+		return err.Error()
+	}
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		DefaultDirectory: filepath.Dir(a.Path),
+		DefaultFilename:  fmt.Sprintf("landmarks_%s.json", time.Now().Format("20060102_150405")),
+		Filters: []runtime.FileFilter{{
+			DisplayName: ".json",
 			Pattern:     "*.json",
+		}},
+	})
+	if err != nil {
+		log.Println(err)
+		return err.Error()
+	}
+	err = os.WriteFile(path, data, 0644)
+	if err != nil {
+		log.Println(err)
+		return err.Error()
+	}
+
+	return ""
+}
+
+func (a *App) loadProjectFile(projectFile string) error {
+	// Open our jsonFile
+	jsonFile, err := os.Open(projectFile)
+	// if we os.Open returns an error then handle it
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	defer jsonFile.Close()
+
+	byteValue, _ := io.ReadAll(jsonFile)
+
+	var calibFile project
+	err = json.Unmarshal([]byte(byteValue), &calibFile)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	a.Path = projectFile
+	a.Project = &calibFile
+	return nil
+}
+
+func (a *App) ImportNewFile() string {
+	projectFile := a.openFileDialog("Select Project File", []runtime.FileFilter{
+		{
+			DisplayName: "Sphaeroptica File",
+			Pattern:     "*.sph",
 		},
 	},
 	)
+	err := a.loadProjectFile(projectFile)
+	if err != nil {
+		log.Println(err.Error())
+		return ""
+	}
 
-	return str
+	return projectFile
 }
 
 func (a *App) openFileDialog(title string, filters []runtime.FileFilter) string {
 	str, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		DefaultDirectory: defaultDirectory,
+		DefaultDirectory: a.DefaultDirectory,
 		Title:            title,
 		Filters:          filters,
 	})
-	defaultDirectory = filepath.Dir(str)
+	a.DefaultDirectory = filepath.Dir(str)
 	if err != nil {
 		return ""
 	}
@@ -437,11 +471,11 @@ func (a *App) openFileDialog(title string, filters []runtime.FileFilter) string 
 
 func (a *App) openDirectoryDialog(title string, filters []runtime.FileFilter) string {
 	str, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		DefaultDirectory: defaultDirectory,
+		DefaultDirectory: a.DefaultDirectory,
 		Title:            title,
 		Filters:          filters,
 	})
-	defaultDirectory = str
+	a.DefaultDirectory = str
 	if err != nil {
 		return ""
 	}

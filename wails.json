@@ -14,7 +14,7 @@
       {
         "ext": "sph",
         "name": "Sphaeroptica File",
-        "description": "Sphaeroptica file",
+        "description": "Project file containing all the calibration data",
         "iconName": "appicon",
         "role": "Editor"
       }
